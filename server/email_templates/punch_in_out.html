@@ -2,7 +2,14 @@
 <html>
 <head>
   <style>
-    .container { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #333; line-height: 1.6; }
+    .container { 
+      font-family: 'Segoe UI', Arial, sans-serif; 
+      color: #333; 
+      margin: 0 auto;
+      padding: 15px;
+      /* Desktop: Fixed width | Mobile: 100% width */
+      max-width: 600px; 
+    }
     .card { background-color: #f9f9f9; border: 1px solid #eeeeee; border-radius: 8px; padding: 20px; margin-top: 15px; max-width: 400px; }
     .status-badge { display: inline-block; padding: 4px 12px; border-radius: 4px; background-color: #e8f0fe; color: #1a73e8; font-weight: bold; text-transform: uppercase; font-size: 12px; }
     .summary-table { width: 100%; margin-top: 15px; border-collapse: collapse; }
@@ -11,6 +18,9 @@
     .value { font-weight: 600; text-align: right; }
     .footer { margin-top: 25px; color: #888; font-size: 13px; }
     .highlight { color: #28a745; font-weight: bold; }
+    .summary-table tr:last-child td {
+  border-bottom: none !important;
+}
   </style>
 </head>
 <body>
