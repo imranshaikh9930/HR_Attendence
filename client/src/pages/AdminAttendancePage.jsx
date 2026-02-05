@@ -1,10 +1,12 @@
-import React, { useContext, useEffect, useMemo, useState } from "react";
+ import React, { use, useContext, useEffect, useMemo, useState } from "react";
 import Loader from "../components/Loader";
 import { EmployContext } from "../context/EmployContextProvider";
 import Filters from "../components/Filters";
 
 
 const StatusBadge = ({ status }) => {
+
+  console.log("Status",status)
   const styles = {
     Present: "bg-green-600 text-white",
     Working: "bg-blue-600 text-white",
@@ -24,22 +26,6 @@ const StatusBadge = ({ status }) => {
 };
 
 
-// const formatTime = (value) => {
-//   if (!value) return "--";
-//   try {
-//     const utcDate = new Date(value);
-//     const indiaTime = new Date(
-//       utcDate.toLocaleString("en-US", { timeZone: "Asia/Kolkata" })
-//     );
-//     return indiaTime.toLocaleTimeString("en-US", {
-//       hour: "2-digit",
-//       minute: "2-digit",
-//       hour12: true,
-//     });
-//   } catch {
-//     return "--";
-//   }
-// };
 
 const formatDate = (value) => {
   if (!value) return "--";
@@ -47,20 +33,39 @@ const formatDate = (value) => {
 };
 
 const formatInterval = (val) => {
-  if (!val) return "--";
+  if (!val || val === "0h 0m") return "00:00";
+
+  // Case 1: If it's the string "8h 23m" from your backend
+  if (typeof val === "string" && val.includes('h')) {
+    const parts = val.match(/\d+/g); // Extracts numbers: ["8", "23"]
+    if (parts) {
+      const h = parts[0].padStart(2, "0");
+      const m = (parts[1] || "0").padStart(2, "0");
+      return `${h}:${m}`;
+    }
+  }
+
+  // Case 2: If it's a raw Postgres object { hours: 8, minutes: 23 }
   if (typeof val === "object") {
     const h = String(val.hours || 0).padStart(2, "0");
     const m = String(val.minutes || 0).padStart(2, "0");
     return `${h}:${m}`;
   }
+
   return val;
 };
 
+// Usage in your Excel map:
+// "Total Hours": formatInterval(row.total_hours_str) // Output: "08:23"
+
 
 const AdminAttendance = () => {
-  const { filters } = useContext(EmployContext);
+  const { filters,
+    setSingleAdminAttendance, } = useContext(EmployContext);
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(false);
+
+
 
   const isAdmin = true; // adjust based on your auth context
 
@@ -94,8 +99,12 @@ const AdminAttendance = () => {
 
         const json = await res.json();
 
+        console.log("json",json);
+
         if (res.ok) {
           setData(json.attendance || []);
+        setSingleAdminAttendance(json.attendance);
+
         } else {
           console.error("Error fetching attendance:", json.message || res.statusText);
         }
@@ -140,6 +149,8 @@ const AdminAttendance = () => {
     return result;
   }, [data, filters, isAdmin]);
 
+
+
   // Row styling function
   const getRowClass = (dayStr, isToday, index) => {
     if (isAdmin && dayStr === "Sun") return "bg-orange-500 text-white font-semibold";
@@ -151,6 +162,7 @@ const AdminAttendance = () => {
   if (loading) return <div className="flex items-center justify-center h-[70vh]">
     <Loader />
   </div>;
+  
   const handleFilterClick = () => { }
   return (
     <div className="min-h-screen bg-gray-100 px-3 pb-6">
@@ -198,7 +210,7 @@ const AdminAttendance = () => {
                     {dayStr === "Sun" || isAbsent ? "" : row.punch_out ? row.punch_out.toUpperCase() : "Working..."}
                   </td>
                   <td className="border px-4 py-2">
-                    {dayStr === "Sun" || isAbsent ? "" : formatInterval(row.total_hours)}
+                    {dayStr === "Sun" || isAbsent ? "" : formatInterval(row.total_hours_str)}
                   </td>
                   <td className="border px-4 py-2">{dayStr === "Sun" ? "" : dayStr === "Sat" ? "5" : "9.3"}</td>
                 </tr>

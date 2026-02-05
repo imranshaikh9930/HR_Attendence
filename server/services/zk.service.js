@@ -4,12 +4,34 @@ const cron = require("node-cron");
 const sendEmail = require("../utils/mailer");
 
 // Normalize device punch time
+// function normalizePunchTime(recordTime) {
+//   if (!recordTime) return null;
+//   const parts = recordTime.split(" ");
+//   if (parts.length < 5) return null;
+
+//   const day = parts[2];
+//   const monthStr = parts[1];
+//   const year = parts[3];
+//   const time = parts[4];
+
+//   const monthMap = {
+//     Jan: "01", Feb: "02", Mar: "03", Apr: "04",
+//     May: "05", Jun: "06", Jul: "07", Aug: "08",
+//     Sep: "09", Oct: "10", Nov: "11", Dec: "12"
+//   };
+
+//   const month = monthMap[monthStr];
+//   if (!month) return null;
+
+//   return `${year}-${month}-${day} ${time}`;
+// }
+
 function normalizePunchTime(recordTime) {
   if (!recordTime) return null;
   const parts = recordTime.split(" ");
   if (parts.length < 5) return null;
 
-  const day = parts[2];
+  const day = parts[2].padStart(2, '0'); // Ensure 2 digits for day
   const monthStr = parts[1];
   const year = parts[3];
   const time = parts[4];
@@ -23,7 +45,9 @@ function normalizePunchTime(recordTime) {
   const month = monthMap[monthStr];
   if (!month) return null;
 
-  return `${year}-${month}-${day} ${time}`;
+  // Append +05:30 so the system knows this is India Time (IST)
+  // Format: YYYY-MM-DD HH:mm:ss+05:30
+  return `${year}-${month}-${day} ${time}+05:30`;
 }
 
 // Fetch and sync punches
@@ -260,23 +284,23 @@ async function getDeviceAttendance() {
                   }
 
                   // 4. Send the email
-                  await sendEmail(
-                    employee.email,
-                      `Attendance Notification: ${action}`,
-                      "punch_in_out",
-                      { 
-                          name: employee.name,
-                          emp_id:employee.emp_id, 
-                          action, 
-                          date: formattedDate, 
-                          day: dayName,
-                          time: timeStr,
-                          punch_in: punchInTime,
-                          punch_out: action.toLowerCase().includes("out") || showSummary ? timeStr : "---",
-                          duration: showSummary ? totalDuration : "Initial Punch",
-                          is_out: showSummary 
-                      }
-                  );
+                  // await sendEmail(
+                  //   employee.email,
+                  //     `Attendance Notification: ${action}`,
+                  //     "punch_in_out",
+                  //     { 
+                  //         name: employee.name,
+                  //         emp_id:employee.emp_id, 
+                  //         action, 
+                  //         date: formattedDate, 
+                  //         day: dayName,
+                  //         time: timeStr,
+                  //         punch_in: punchInTime,
+                  //         punch_out: action.toLowerCase().includes("out") || showSummary ? timeStr : "---",
+                  //         duration: showSummary ? totalDuration : "Initial Punch",
+                  //         is_out: showSummary 
+                  //     }
+                  // );
             
               } catch (dbErr) {
                   console.error("Email processing error:", dbErr);

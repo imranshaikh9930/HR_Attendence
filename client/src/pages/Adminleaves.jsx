@@ -67,7 +67,9 @@ const Adminleaves = () => {
     "Employee", "Period", "Days", "Type", "Reason", "Current Level", "Actions"
   ];
 
-  if (loading) return <div className="p-10 text-center"><Loader/></div>;
+  if (loading) return <div className="flex items-center justify-center h-[70vh]">
+  <Loader />
+</div>;
 
   return (
     <div className="px-3 pb-6">

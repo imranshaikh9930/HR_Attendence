@@ -10,7 +10,7 @@ const AddEmploy = () => {
     emp_id: "",
     role: "employee",
     is_active: true,
-    shift_id: 1,
+    shift_id: 3,
     dob: "",
     gender: "",
     department: "",

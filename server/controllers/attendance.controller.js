@@ -14,7 +14,7 @@ exports.getAdminMyAttendance = async (req, res) => {
   try {
     const empId = req.user.emp_id;
 
-    // 1. Sync recent activity (Last 2 days) to daily_attendance table
+    // 1. Sync recent activity (No changes here, remains efficient)
     await db.query(`
       INSERT INTO daily_attendance (emp_id, attendance_date, punch_in, punch_out, expected_hours)
       SELECT 
@@ -40,10 +40,9 @@ exports.getAdminMyAttendance = async (req, res) => {
       ON CONFLICT (emp_id, attendance_date) DO NOTHING;
     `, [empId]);
 
-    // 2. Fetch attendance for a continuous 30-day range
+    // 2. Fetch attendance with Working Hours Calculation
     const { rows } = await db.query(`
       WITH dates AS (
-        -- CHANGE HERE: Generates exactly the last 30 days including today
         SELECT generate_series(
           CURRENT_DATE - INTERVAL '29 days', 
           CURRENT_DATE, 
@@ -72,36 +71,32 @@ exports.getAdminMyAttendance = async (req, res) => {
           FROM attendance_logs WHERE emp_id = $1
         ) x GROUP BY emp_id, attendance_date
       )
-      SELECT 
-        $1 AS emp_id,
-        u.name AS employee_name,
-        to_char(d.attendance_date, 'YYYY-MM-DD') AS attendance_date,
-        COALESCE(ad.punch_in, da.punch_in, al.punch_in) AS punch_in,
-        COALESCE(ad.punch_out, da.punch_out, al.punch_out) AS punch_out,
-        CASE 
-          WHEN COALESCE(ad.punch_in, da.punch_in, al.punch_in) IS NOT NULL 
-           AND COALESCE(ad.punch_out, da.punch_out, al.punch_out) IS NOT NULL 
-          THEN EXTRACT(EPOCH FROM (COALESCE(ad.punch_out, da.punch_out, al.punch_out) - COALESCE(ad.punch_in, da.punch_in, al.punch_in)))
-          ELSE NULL 
-        END AS total_seconds,
-        da.expected_hours,
-        CASE 
-          WHEN COALESCE(ad.punch_in, da.punch_in, al.punch_in) IS NULL THEN 'Absent'
-          -- Check if it's currently today and they haven't punched out yet
-          WHEN COALESCE(ad.punch_out, da.punch_out, al.punch_out) IS NULL AND d.attendance_date = CURRENT_DATE THEN 'Working'
-          -- Handle forgotten punch-outs for past days
-          WHEN COALESCE(ad.punch_out, da.punch_out, al.punch_out) IS NULL THEN 'Missing Punch-Out'
-          ELSE 'Present'
-        END AS status
-      FROM dates d
-      JOIN users u ON u.emp_id = $1
-      LEFT JOIN activity_data ad ON ad.attendance_date = d.attendance_date
-      LEFT JOIN daily_attendance da ON da.attendance_date = d.attendance_date AND da.emp_id = $1
-      LEFT JOIN attendance_log_data al ON al.attendance_date = d.attendance_date
-      ORDER BY d.attendance_date DESC;
+    SELECT 
+  $1 AS emp_id,
+  u.name AS employee_name,
+  to_char(d.attendance_date, 'YYYY-MM-DD') AS attendance_date,
+  COALESCE(ad.punch_in, da.punch_in, al.punch_in) AS punch_in,
+  COALESCE(ad.punch_out, da.punch_out, al.punch_out) AS punch_out,
+  -- CALCULATE WORKING HOURS
+  (COALESCE(ad.punch_out, da.punch_out, al.punch_out) - COALESCE(ad.punch_in, da.punch_in, al.punch_in)) AS total_hours,
+  CASE 
+    -- If there is no punch_in at all, they are Absent
+    WHEN COALESCE(ad.punch_in, da.punch_in, al.punch_in) IS NULL THEN 'Absent'
+    
+    -- If they have a punch_in, they are Present 
+    -- (This covers 'Working', 'Present', and same-time punches)
+    ELSE 'Present'
+  END AS status
+FROM dates d
+JOIN users u ON u.emp_id = $1
+LEFT JOIN activity_data ad ON ad.attendance_date = d.attendance_date
+LEFT JOIN daily_attendance da ON da.attendance_date = d.attendance_date AND da.emp_id = $1
+LEFT JOIN attendance_log_data al ON al.attendance_date = d.attendance_date
+WHERE u.is_active = true  -- Ensuring only active users are processed
+ORDER BY d.attendance_date DESC;
     `, [empId]);
 
-    // 3. Format result for Frontend
+    // 3. Format result for Frontend (consistent with your table row logic)
     const formattedData = rows.map(r => {
       const formatTime = (isoStr) => {
         if (!isoStr) return '---';
@@ -110,18 +105,15 @@ exports.getAdminMyAttendance = async (req, res) => {
         });
       };
 
-      let total_hours_str = "0h 0m";
-      if (r.total_seconds) {
-        const h = Math.floor(r.total_seconds / 3600);
-        const m = Math.floor((r.total_seconds % 3600) / 60);
-        total_hours_str = `${h}h ${m}m`;
-      }
+      // Handle PostgreSQL interval object correctly
+      const hours = r.total_hours?.hours || 0;
+      const minutes = r.total_hours?.minutes || 0;
 
       return {
         ...r,
         punch_in: formatTime(r.punch_in),
         punch_out: formatTime(r.punch_out),
-        total_hours_str
+        total_hours_str: `${hours}h ${minutes}m`
       };
     });
 
@@ -487,125 +479,210 @@ const runAttendanceTask = async () => {
 };
 
 // Reusable logic for both API and Scheduler
-const processAndSendAttendanceReport = async (sendEmailToAdmin = false) => {
-  // 1. Run the UPSERT query to sync logs to daily_attendance
-  await db.query(`
-    WITH params AS (SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::DATE AS ist_date),
-    punch_calc AS (
-      SELECT al.emp_id, p.ist_date AS attendance_date,
-      MIN(al.punch_time) AS punch_in,
-      CASE WHEN COUNT(al.punch_time) > 1 THEN MAX(al.punch_time) ELSE NULL END AS punch_out
-      FROM attendance_logs al CROSS JOIN params p
-      WHERE (al.punch_time AT TIME ZONE 'Asia/Kolkata')::DATE = p.ist_date
-      GROUP BY al.emp_id, p.ist_date
-    )
-    INSERT INTO daily_attendance (emp_id, attendance_date, punch_in, punch_out, total_hours, expected_hours, status)
-    SELECT pc.emp_id, pc.attendance_date, pc.punch_in, pc.punch_out,
-      CASE WHEN pc.punch_in IS NOT NULL AND pc.punch_out IS NOT NULL THEN pc.punch_out - pc.punch_in ELSE INTERVAL '0 minutes' END,
-      INTERVAL '9 hours',
-      CASE WHEN pc.punch_in IS NULL THEN 'Absent' WHEN pc.punch_out IS NULL THEN 'Working' ELSE 'Present' END
-    FROM punch_calc pc
-    ON CONFLICT (emp_id, attendance_date) DO UPDATE SET
-      punch_in = EXCLUDED.punch_in, punch_out = EXCLUDED.punch_out,
-      total_hours = EXCLUDED.total_hours, status = EXCLUDED.status;
-  `);
+// const processAndSendAttendanceReport = async (sendEmailToAdmin = true) => {
+//   // 1. Run the UPSERT query to sync logs to daily_attendance
+//   await db.query(`
+//     WITH params AS (SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::DATE AS ist_date),
+//     punch_calc AS (
+//       SELECT al.emp_id, p.ist_date AS attendance_date,
+//       MIN(al.punch_time) AS punch_in,
+//       CASE WHEN COUNT(al.punch_time) > 1 THEN MAX(al.punch_time) ELSE NULL END AS punch_out
+//       FROM attendance_logs al CROSS JOIN params p
+//       WHERE (al.punch_time AT TIME ZONE 'Asia/Kolkata')::DATE = p.ist_date
+//       GROUP BY al.emp_id, p.ist_date
+//     )
+//     INSERT INTO daily_attendance (emp_id, attendance_date, punch_in, punch_out, total_hours, expected_hours, status)
+//     SELECT pc.emp_id, pc.attendance_date, pc.punch_in, pc.punch_out,
+//       CASE WHEN pc.punch_in IS NOT NULL AND pc.punch_out IS NOT NULL THEN pc.punch_out - pc.punch_in ELSE INTERVAL '0 minutes' END,
+//       INTERVAL '9 hours',
+//       CASE WHEN pc.punch_in IS NULL THEN 'Absent' WHEN pc.punch_out IS NULL THEN 'Working' ELSE 'Present' END
+//     FROM punch_calc pc
+//     ON CONFLICT (emp_id, attendance_date) DO UPDATE SET
+//       punch_in = EXCLUDED.punch_in, punch_out = EXCLUDED.punch_out,
+//       total_hours = EXCLUDED.total_hours, status = EXCLUDED.status;
+//   `);
 
-  // 2. Fetch the updated list
-  const { rows } = await db.query(`
-    SELECT 
-      u.emp_id, 
-      u.name, 
-      u.email,
-      u.is_active,
-      (a.attendance_date + time '12:00:00') AT TIME ZONE 'Asia/Kolkata' AS attendance_date,
-      a.punch_in, 
-      a.punch_out, 
-      COALESCE(a.total_hours, INTERVAL '0 minutes') AS total_hours,
-      CASE 
-        WHEN u.is_active = FALSE THEN 'Inactive' 
-        WHEN a.emp_id IS NULL THEN 'Absent' 
-        ELSE a.status 
-      END AS status
-    FROM users u
-    LEFT JOIN daily_attendance a ON a.emp_id = u.emp_id AND a.attendance_date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::DATE
-    WHERE u.role IN ('employee', 'admin') AND u.emp_id IS NOT NULL
-    ORDER BY u.is_active DESC, u.name; -- Active users first
-  `);
+//   // 2. Fetch the updated list
+//   const { rows } = await db.query(`
+//     SELECT 
+//       u.emp_id, 
+//       u.name, 
+//       u.email,
+//       u.is_active,
+//       (a.attendance_date + time '12:00:00') AT TIME ZONE 'Asia/Kolkata' AS attendance_date,
+//       a.punch_in, 
+//       a.punch_out, 
+//       COALESCE(a.total_hours, INTERVAL '0 minutes') AS total_hours,
+//       CASE 
+//         WHEN u.is_active = FALSE THEN 'Inactive' 
+//         WHEN a.emp_id IS NULL THEN 'Absent' 
+//         ELSE a.status 
+//       END AS status
+//     FROM users u
+//     LEFT JOIN daily_attendance a ON a.emp_id = u.emp_id AND a.attendance_date = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::DATE
+//     WHERE u.role IN ('employee', 'admin') 
+//     AND u.emp_id IS NOT NULL
+//     ORDER BY u.is_active DESC, u.name; -- Active users first
+//   `);
 
-  // 3. Generate HTML
-  const tableRowsHtml = rows.map(emp => {
-    const formatTime = (ts) => ts ? new Date(ts).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true }) : '---';
-    const formatDate = (ts) => ts ? new Date(ts).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : '---';
-    const durationStr = `${emp.total_hours?.hours || 0}h ${emp.total_hours?.minutes || 0}m`;
-    const statusColor = emp.status === 'Present' ? '#28a745' : (emp.status === 'Working' ? '#ff9800' : '#dc3545');
-
-    return `<tr>
-      <td style="border:1px solid #ddd; padding:8px;">${emp.emp_id}</td>
-      <td style="border:1px solid #ddd; padding:8px;">${emp.name}</td>
-      <td style="border:1px solid #ddd; text-align: center;">${formatDate(emp.attendance_date)}</td>
-      <td style="border:1px solid #ddd; text-align: center;">${formatTime(emp.punch_in)}</td>
-      <td style="border:1px solid #ddd; text-align: center;">${formatTime(emp.punch_out)}</td>
-      <td style="border:1px solid #ddd; text-align: center;">${durationStr}</td>
-<td style="border: 1px solid #ddd; padding: 12px; text-align: center; vertical-align: middle;">
-  <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto; border-collapse: separate !important; mso-hide: all;">
-    <tr>
-      <td align="center" style="
-        border-radius: 50px; 
-        background-color: ${statusColor}; 
-        width: 100px;
-        height: 28px;
-      ">
-        <span style="
-          display: block;
-          padding: 6px 0;
-          color: #ffffff;
-          font-family: Arial, sans-serif;
-          font-size: 10px;
-          font-weight: 800; /* Extra bold for button feel */
-          text-transform: uppercase;
-          text-decoration: none;
-          letter-spacing: 0.5px;
-          line-height: 1;
-        ">
-          ${emp.status}
-        </span>
-      </td>
-    </tr>
-  </table>
-</td>
-    </tr>`;
-  }).join('');
-
-  // console.log("sendEmailToAdmin",sendEmailToAdmin)
-  // Send email
-  if (sendEmailToAdmin) {
-    // const adminEmails = "s.imran@i-diligence.com"
-    const adminEmails = "hradmin@i-diligence.com,s.hanif@i-diligence.com"; 
-    const ccEmails = "s.irfan@i-diligence.com,s.hanif@i-diligence.com";
-    const subject = "Daily Organization Attendance Report";
-  
+//   // console.log("rows",rows)
+//   // 3. Generate HTML
+//   const tableRowsHtml = rows
+//   // 1. Filter out inactive employees first
+//   .filter(emp => emp.is_active === true || emp.is_active === 1) 
+//   .map(emp => {
+//     // 2. Formatting Helpers
+//     const formatTime = (ts) => ts ? new Date(ts).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true }) : '---';
+//     const formatDate = (ts) => ts ? new Date(ts).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : '---';
     
-    // console.log("Preparing to send email:", { to: adminEmails, cc: ccEmails, subject });
+//     // Handle Postgres interval or pre-calculated string
+//     const durationStr = emp.total_hours_str || `${emp.total_hours?.hours || 0}h ${emp.total_hours?.minutes || 0}m`;
+    
+//     // 3. Dynamic Status Colors
+//     const statusColor = emp.status === 'Present' ? '#28a745' : (emp.status === 'Working' ? '#ff9800' : '#dc3545');
+
+//     return `<tr>
+//       <td style="border:1px solid #ddd; padding:8px;">${emp.emp_id}</td>
+//       <td style="border:1px solid #ddd; padding:8px;"><strong>${emp.name}</strong></td>
+//       <td style="border:1px solid #ddd; text-align: center;">${formatDate(emp.attendance_date)}</td>
+//       <td style="border:1px solid #ddd; text-align: center;">${formatTime(emp.punch_in)}</td>
+//       <td style="border:1px solid #ddd; text-align: center;">${formatTime(emp.punch_out)}</td>
+//       <td style="border:1px solid #ddd; text-align: center;">${durationStr}</td>
+//       <td style="border: 1px solid #ddd; padding: 12px; text-align: center; vertical-align: middle;">
+//         <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto; border-collapse: separate !important;">
+//           <tr>
+//             <td align="center" style="
+//               border-radius: 50px; 
+//               background-color: ${statusColor}; 
+//               width: 100px;
+//               height: 28px;
+//             ">
+//               <span style="
+//                 display: block;
+//                 padding: 6px 0;
+//                 color: #ffffff;
+//                 font-family: Arial, sans-serif;
+//                 font-size: 10px;
+//                 font-weight: 800;
+//                 text-transform: uppercase;
+//                 line-height: 1;
+//               ">
+//                 ${emp.status}
+//               </span>
+//             </td>
+//           </tr>
+//         </table>
+//       </td>
+//     </tr>`;
+//   }).join('');
+
+//   console.log("sendEmailToAdmin",sendEmailToAdmin)
+//   // Send email
+//   // if (sendEmailToAdmin) {
+//   //   const adminEmails = "s.imran@i-diligence.com"
+//   //   // const adminEmails = "hradmin@i-diligence.com,s.hanif@i-diligence.com"; 
+//   //   // const ccEmails = "s.irfan@i-diligence.com,s.hanif@i-diligence.com";
+//   //   const subject = "Daily Organization Attendance Report";
   
-    await sendEmail(
-      adminEmails, 
-      subject, 
-      "admin_all_present", 
-      {
-        time: new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' }),
-        employee_rows: tableRowsHtml
-      },
-      ccEmails 
-    );
+//   //   console.log("adminEmails",adminEmails);
+//   //   // console.log("Preparing to send email:", { to: adminEmails, cc: ccEmails, subject });
+  
+//   //   await sendEmail(
+//   //     adminEmails, 
+//   //     subject, 
+//   //     "admin_all_present", 
+//   //     {
+//   //       time: new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' }),
+//   //       employee_rows: tableRowsHtml
+//   //     },
+//   //     // ccEmails 
+//   //   );
+//   // }
+
+//   console.log("rows",rows);
+//   return rows;
+// };
+// Add req and res here so they are defined
+const processAndSendAttendanceReport = async (req, res) => {
+  try {
+    // Standardizing the date to avoid timezone shifts between JS and PostgreSQL
+    const todayIST = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+
+    const query = `
+      -- 1. Identify users who have logs but are missing from attendance table
+      -- ADDED: u.is_active filter so inactive employees aren't auto-synced
+      WITH missing_records AS (
+        SELECT 
+          al.emp_id,
+          '${todayIST}'::DATE as attendance_date,
+          MIN(al.punch_time) as first_p,
+          MAX(al.punch_time) as last_p,
+          COUNT(al.punch_time) as p_count
+        FROM activity_log al
+        INNER JOIN users u ON al.emp_id = u.emp_id
+        LEFT JOIN daily_attendance da 
+          ON al.emp_id = da.emp_id 
+          AND (al.punch_time AT TIME ZONE 'Asia/Kolkata')::DATE = da.attendance_date
+        WHERE (al.punch_time AT TIME ZONE 'Asia/Kolkata')::DATE = '${todayIST}'::DATE
+          AND da.emp_id IS NULL 
+          AND u.is_active = true  -- Only sync those who are currently ACTIVE
+        GROUP BY al.emp_id
+      ),
+      -- 2. Insert the missing records
+      auto_sync AS (
+        INSERT INTO daily_attendance (emp_id, attendance_date, punch_in, punch_out, total_hours, status)
+        SELECT 
+          mr.emp_id,
+          mr.attendance_date,
+          mr.first_p,
+          CASE WHEN mr.p_count > 1 THEN mr.last_p ELSE NULL END,
+          CASE WHEN mr.p_count > 1 THEN (mr.last_p - mr.first_p) ELSE INTERVAL '0 hours' END,
+          CASE WHEN mr.p_count = 1 THEN 'Working' ELSE 'Present' END
+        FROM missing_records mr
+        RETURNING *
+      )
+      -- 3. Final Select: Combine all employees with their attendance status
+      SELECT 
+        u.emp_id, 
+        u.name, 
+        u.email,
+        u.is_active,
+        '${todayIST}' AS attendance_date,
+        da.punch_in,
+        da.punch_out,
+        -- If inactive, mark as Inactive; if no log, mark as Absent
+        CASE 
+          WHEN u.is_active = false THEN 'Inactive'
+          WHEN da.status IS NULL THEN 'Absent'
+          ELSE da.status 
+        END as status,
+        TO_CHAR(da.total_hours, 'HH24:MI') as duration
+      FROM users u
+      LEFT JOIN daily_attendance da 
+        ON u.emp_id = da.emp_id 
+        AND da.attendance_date = '${todayIST}'::DATE
+      WHERE u.role IN ('employee', 'admin') 
+      ORDER BY u.is_active DESC, u.name ASC;
+    `;
+
+    const { rows } = await db.query(query);
+
+    if (res) {
+      return res.status(200).json(rows);
+    }
+    return rows;
+
+  } catch (error) {
+    console.error("Auto-sync fetch error:", error);
+    if (res) {
+      return res.status(500).json({ message: "Failed to sync and fetch attendance" });
+    }
   }
-
-  return rows;
 };
-
 exports.getTodayOrganizationAttendance = async (req, res) => {
   try {
     // Change 'true' to 'false' so manual API hits don't trigger the email
-    const data = await processAndSendAttendanceReport(false); 
+    const data = await processAndSendAttendanceReport(true); 
     res.status(200).json(data);
   } catch (error) {
     console.error("Manual report error:", error);
@@ -615,22 +692,22 @@ exports.getTodayOrganizationAttendance = async (req, res) => {
 
 
 
-cron.schedule('0 11,16,20 * * *', async () => {
-  console.log(`[${new Date().toISOString()}] Starting hourly attendance report...`);
-  runAttendanceTask();
-}, {
-  scheduled: true,
-  timezone: "Asia/Kolkata"
-});
+// cron.schedule('0 11,16,21 * * *', async () => {
+//   console.log(`[${new Date().toISOString()}] Starting hourly attendance report...`);
+//   runAttendanceTask();
+// }, {
+//   scheduled: true,
+//   timezone: "Asia/Kolkata"
+// });
 
 
-cron.schedule('30 20 * * *', async () => {
-  console.log(`[${new Date().toISOString()}] Starting 8:30 PM attendance report...`);
-  runAttendanceTask();
-}, {
-  scheduled: true,
-  timezone: "Asia/Kolkata"
-});
+// cron.schedule('30 20 * * *', async () => {
+//   console.log(`[${new Date().toISOString()}] Starting 8:30 PM attendance report...`);
+//   runAttendanceTask();
+// }, {
+//   scheduled: true,
+//   timezone: "Asia/Kolkata"
+// });
 
 
   

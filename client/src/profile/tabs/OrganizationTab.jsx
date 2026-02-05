@@ -45,7 +45,7 @@ const OrganizationTab = () => {
   const displayFields = Object.keys(org).filter((key) => !hiddenFields.includes(key));
 
   return (
-    <FormCard title="Organization Details">
+    <FormCard title="">
       {loading ? (
         /* 3. Modern Loading UI */
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '20px', padding: '20px' }}>

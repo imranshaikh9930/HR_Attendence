@@ -147,7 +147,18 @@ export const scheduleAutoLogout = (token) => {
   }
 };
 
-// Inside your api.js
+// axios.interceptors.response.use(
+//   (response) => response,
+//   (error) => {
+//     // Check for a custom flag we will send
+//     const skipToast = error.config?.skipToast;
+
+//     if (!skipToast) {
+//       toast.error(error.response?.data?.message || "An error occurred");
+//     }
+//     return Promise.reject(error);
+//   }
+// );
 
 
 export default api;

@@ -1,8 +1,9 @@
 import { Typography, Pagination, CircularProgress } from '@mui/material';
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useContext } from 'react';
 import axios from 'axios';
 import Filters from '../components/Filters';
 import Loader from '../components/Loader';
+import { EmployContext } from '../context/EmployContextProvider';
 
 const AdminActivityLog = () => {
     const [data, setData] = useState([]);
@@ -10,6 +11,7 @@ const AdminActivityLog = () => {
     const [pagination, setPagination] = useState({ currentPage: 1, totalPages: 1 });
     const [filters, setFilters] = useState({ from: '', to: '' });
     const [page, setPage] = useState(1);
+    const {setActiveLogs,} = useContext(EmployContext);
 
     const fetchLogs = useCallback(async () => {
         try {
@@ -27,6 +29,7 @@ const AdminActivityLog = () => {
             });
 
             setData(res.data.data);
+            setActiveLogs(res.data.data);
             setPagination(res.data.pagination);
         } catch (err) {
             console.error("Error fetching logs:", err);

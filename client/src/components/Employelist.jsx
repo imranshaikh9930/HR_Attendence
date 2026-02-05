@@ -1,54 +1,37 @@
-import React, { useContext } from 'react';
+import React, { useContext, useEffect } from 'react';
 import { EmployContext } from '../context/EmployContextProvider';
 import { NavLink } from 'react-router-dom';
+import Loader from './Loader';
 
 const Employelist = () => {
-  const { adminAttendance, loading, setAdminAttendance } = useContext(EmployContext);
+  const { adminAttendance, loading } = useContext(EmployContext);
 
   const empHeader = [
     { label: "Emp ID", key: "emp_id" },
     { label: "Emp Name", key: "name" },
     { label: "Email", key: "email" },
-    { label: "Status", key: "status" },
+    // { label: "Status", key: "status" },
     { label: "Action", key: "action" }
   ];
 
+  // useEffect(()=>{
+
+  //   console.log("adminAttendance",adminAttendance)
+  // },[adminAttendance])
+
   // Function to handle the toggle update
-  const handleToggleActive = async (emp_id, currentStatus) => {
-    const newStatus = !currentStatus;
-    
-    // Optional: Optimistic UI update (updates UI before DB confirms)
-    const updatedList = adminAttendance.map(emp => 
-      emp.emp_id === emp_id ? { ...emp, is_active: newStatus } : emp
-    );
-    setAdminAttendance(updatedList);
 
-
-    // console.log("newStatus",newStatus)
-    try {
-      const response = await fetch(`http://localhost:5000/api/admin/attendance/${emp_id}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ is_active: newStatus }),
-      });
-
-      if (!response.ok) throw new Error("Failed to update");
-    } catch (error) {
-      console.error("Update failed, rolling back:", error);
-      // Rollback if API fails
-      setAdminAttendance(adminAttendance);
-      alert("Failed to update employee status.");
-    }
-  };
 
   const filteredEmployees = adminAttendance.filter(
-    emp => emp.emp_id !== "202500021"
+    emp => emp.emp_id !== "202500021" && emp.emp_id
   );
+
+
 
   if (loading) {
     return (
       <div className="flex justify-center items-center min-h-[400px]">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        <Loader/>
       </div>
     );
   }
@@ -82,15 +65,16 @@ const Employelist = () => {
               {filteredEmployees.map((emp) => (
                 <tr key={emp.emp_id} className="hover:bg-blue-50/40 transition-colors duration-150">
                   <td className="px-6 py-4">
-                    <span className="font-mono text-sm font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded">
+                    <span className=" text-sm font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded">
                       {emp.emp_id}
                     </span>
                   </td>
                   <td className="px-6 py-4 text-sm font-semibold text-gray-900">{emp.name}</td>
                   <td className="px-6 py-4 text-sm text-gray-500">{emp.email}</td>
+                  
 
                   {/* STATUS TOGGLE COLUMN */}
-                  <td className="px-6 py-4 whitespace-nowrap">
+                  {/* <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center gap-3">
                       <label className="relative inline-flex items-center cursor-pointer">
                         <input 
@@ -105,7 +89,7 @@ const Employelist = () => {
                         {emp.is_active ? "ACTIVE" : "INACTIVE"}
                       </span>
                     </div>
-                  </td>
+                  </td> */}
 
                   <td className="px-6 py-4">
                     <NavLink

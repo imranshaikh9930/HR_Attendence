@@ -83,9 +83,9 @@ const formatInterval = (val) => {
 const Table = () => {
   const { adminAttendance = [], employeeAttendance = [], loading, filters, holidays } = useContext(EmployContext);
 
-  useEffect(()=>{
-    console.log("employeeAttendance",employeeAttendance)
-  },[])
+  // useEffect(()=>{
+  //   console.log("employeeAttendance",employeeAttendance)
+  // },[])
   const user = JSON.parse(localStorage.getItem("user") || "{}");
   const role = (user?.role || "").toLowerCase();
   const isAdmin = role === "admin";
@@ -151,7 +151,9 @@ const Table = () => {
       <tbody className="bg-white">
         {filteredData
           // Only show active employees in Admin view; Employees see all their own history
-          .filter((row) => (isAdmin ? row.is_active === true : true))
+          .filter((row) => 
+            row.emp_id && (isAdmin ? row.is_active === true : true)
+          )
           .map((row, i) => {
             const dayStr = EmpformatDate(row.attendance_date);
             const holidayMatch = getHolidayMatch(row.attendance_date, holidays);

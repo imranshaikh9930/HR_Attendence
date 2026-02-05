@@ -196,4 +196,3 @@ const AdminSidebar = ({ open, setOpen }) => {
 
 export default AdminSidebar;
 
-// export default Sidebar;

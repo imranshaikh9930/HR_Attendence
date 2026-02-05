@@ -1,4 +1,4 @@
-import React, { createContext, useEffect, useState, useMemo } from "react";
+import React, { createContext, useEffect, useState, useMemo, use } from "react";
 import axios from "axios";
 import ProfImg from "../assets/avatar.webp"
 export const EmployContext = createContext();
@@ -11,6 +11,8 @@ const EmployProvider = ({ children }) => {
   const [employeeAttendance, setEmployeeAttendance] = useState([]);
   const [singleAttendance, setSingleAttendance] = useState(null);
   const [adminAttendance, setAdminAttendance] = useState([]);
+  const [activelogs,setActiveLogs] = useState([]);
+  const [singleAdminAttendance,setSingleAdminAttendance] = useState([]);
 
   /*Loading State*/
   const [employeeLoading, setEmployeeLoading] = useState(false);
@@ -279,6 +281,10 @@ const fetchEmployeeDashboard = async () => {
         profileImage,
         setProfileImage,
         refreshImage,
+        activelogs,
+        setActiveLogs,
+        singleAdminAttendance,
+        setSingleAdminAttendance,
 
         /* Filters */
         filters,
